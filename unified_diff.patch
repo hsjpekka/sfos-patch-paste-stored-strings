@@ -1,0 +1,594 @@
+--- /usr/share/maliit/plugins/com/jolla/PasteButtonBase.qml
++++ /usr/share/maliit/plugins/com/jolla/PasteButtonBase.qml
+@@ -11,10 +11,13 @@
+     property int popupAnchor // 0 -> left, 1 -> right, 2 -> center
+     property alias popupParent: popup.parent
+ 
+-    height: parent ? parent.height : 0
+-    width: Clipboard.hasText ? (keyboard.expandedPaste ? pasteRow.width + 2*Theme.paddingMedium
+-                                                       : pasteIcon.width + Theme.paddingMedium)
+-                             : 0
++    signal actionSelected(string action) //"store", "strings", "clear", "suggestions"
++    property bool showStorage: false
++    property bool storageSetUp: false
++
++    height: parent ? parent.height : 0
++    width: keyboard.expandedPaste ? pasteRow.width + 2*Theme.paddingMedium
++                                                       : pasteIcon.width + Theme.paddingMedium
+ 
+     preventStealing: popup.visible
+     highlighted: down || popup.visible
+@@ -24,8 +27,21 @@
+         keyboard.cancelGesture()
+     }
+     onReleased: {
+-        if (popup.visible && popup.containsMouse)
+-            Clipboard.text = ""
++        if (popup.visible && popup.containsMouse) {
++            if (mouseY < -0.5 * popup.height) {
++                if (showStorage) {
++                    actionSelected("store")
++                } else {
++                    actionSelected("clear")
++                }
++            } else {
++                if (showStorage) {
++                    actionSelected("suggestions")
++                } else {
++                    actionSelected("strings")
++                }
++            }
++        }
+         popup.visible = false
+     }
+     onCanceled: popup.visible = false
+@@ -46,11 +62,12 @@
+     Rectangle {
+         id: popup
+ 
+-        property bool containsMouse
++        property bool containsMouse
++        property int _widerWidth: clearLabel.width > chooseModel.width ? clearLabel.width : chooseModel.width
+ 
+         visible: false
+-        width: clearLabel.width + geometry.clearPasteMargin
+-        height: clearLabel.height + geometry.clearPasteMargin
++        width: _widerWidth + geometry.clearPasteMargin
++        height: clearLabel.height + chooseModel.height + Theme.paddingMedium
+         anchors.right: pasteContainer.popupAnchor == 1 ? parent.right : undefined
+         anchors.horizontalCenter: pasteContainer.popupAnchor == 2 ? parent.horizontalCenter : undefined
+         anchors.bottom: parent.top
+@@ -61,10 +78,26 @@
+ 
+         Label {
+             id: clearLabel
+-            anchors.centerIn: parent
+-            color: parent.containsMouse ? Theme.primaryColor : Theme.highlightColor
+-            //% "Clear clipboard"
+-            text: qsTrId("text_input-la-clear_clipboard")
++            anchors {
++                top: parent.top
++                topMargin: 0.5*Theme.paddingSmall
++            }
++            color: (parent.containsMouse && mouseY < -0.5*parent.height) ? Theme.highlightColor : Theme.primaryColor
++            opacity: Clipboard.hasText? 1 : Theme.opacityLow
++            //% "Clear clipboard"
++            text: showStorage? qsTr("store clipboard") : qsTrId("text_input-la-clear_clipboard")
++            x: 0.5*(parent.width - width)
++        }
++
++        Label {
++            id: chooseModel
++            anchors {
++                bottom: parent.bottom
++                bottomMargin: 0.5*Theme.paddingSmall
++            }
++            color: (parent.containsMouse && mouseY > -0.5*parent.height) ? Theme.highlightColor : Theme.primaryColor
++            text: storageSetUp? (showStorage? qsTr("suggestions") : qsTr("stored strings")) : qsTr("patch problem")
++            x: 0.5*(parent.width - width)
+         }
+     }
+ }
+--- /usr/share/maliit/plugins/com/jolla/PasteButton.qml
++++ /usr/share/maliit/plugins/com/jolla/PasteButton.qml
+@@ -34,6 +34,7 @@
+             anchors.verticalCenter: parent.verticalCenter
+             source: "image://theme/icon-m-clipboard"
+                     + (pasteContainer.highlighted ? ("?" + Theme.highlightColor) : "")
++            opacity: Clipboard.hasText? 1.0 : Theme.opacityHigh
+         }
+     }
+ }
+--- /usr/share/maliit/plugins/com/jolla/PasteButtonVertical.qml
++++ /usr/share/maliit/plugins/com/jolla/PasteButtonVertical.qml
+@@ -20,6 +20,7 @@
+             anchors.verticalCenter: parent.verticalCenter
+             source: "image://theme/icon-m-clipboard"
+                     + (pasteContainer.highlighted ? ("?" + Theme.highlightColor) : "")
++            opacity: Clipboard.hasText? 1.0 : Theme.opacityHigh
+         }
+ 
+         Label {
+--- /usr/share/maliit/plugins/com/jolla/HorizontalPredictionListView.qml
++++ /usr/share/maliit/plugins/com/jolla/HorizontalPredictionListView.qml
+@@ -10,6 +10,9 @@
+     property real _buttonMargin: showRemoveButton ? Theme.itemSizeExtraSmall : Theme.paddingLarge
+     readonly property real _maximumLabelWidth: width - (2 * Theme.paddingLarge)
+ 
++    signal actionActivated(string action)
++    property bool patchSetUp: false
++
+     orientation: ListView.Horizontal
+ 
+     Behavior on _buttonMargin { NumberAnimation { id: marginAnimation; duration: 100 } }
+@@ -19,10 +22,15 @@
+     }
+ 
+     header: PasteButton {
++        showStorage: false
++        storageSetUp: patchSetUp
+         onClicked: {
+             view.handler.paste(Clipboard.text)
+             keyboard.expandedPaste = false
+         }
++        onActionSelected: {
++            actionActivated(action)
++        }
+     }
+ 
+     delegate: BackgroundItem {
+--- /usr/share/maliit/plugins/com/jolla/VerticalPredictionListView.qml
++++ /usr/share/maliit/plugins/com/jolla/VerticalPredictionListView.qml
+@@ -9,6 +9,8 @@
+ 
+     property real _buttonMargin: showRemoveButton ? Theme.itemSizeExtraSmall : 0
+ 
++    signal actionActivated(string action)
++
+     Behavior on _buttonMargin { NumberAnimation { duration: 100 } }
+ 
+     clip: true
+@@ -20,13 +22,17 @@
+     }
+ 
+     header: PasteButtonVertical {
+-        visible: Clipboard.hasText
++        showStorage: false
++        storageSetUp: true
+         width: view.width
+         height: visible ? geometry.keyHeightLandscape : 0
+         popupParent: view.parent
+         popupAnchor: 2 // center
+ 
+         onClicked: view.handler.paste(Clipboard.text)
++        onActionSelected: {
++            actionActivated(action)
++        }
+     }
+ 
+     delegate: BackgroundItem {
+--- /usr/share/maliit/plugins/com/jolla/PasteInputHandler.qml
++++ /usr/share/maliit/plugins/com/jolla/PasteInputHandler.qml
+@@ -3,7 +3,8 @@
+ 
+ import QtQuick 2.0
+ import Sailfish.Silica 1.0
+-import Sailfish.Silica.private 1.0 as SilicaPrivate
++import Sailfish.Silica.private 1.0 as SilicaPrivate
++import Nemo.Configuration 1.0 // patch paste-stored-strings
+ 
+ InputHandler {
+     id: pasteHandler
+@@ -27,12 +28,55 @@
+ 
+     topItem: Component {
+         TopItem {
++            SilicaListView {
++                anchors.fill: parent
++                model: storedStrings
++                orientation: ListView.Horizontal
++                spacing: Theme.paddingMedium
++                visible: showStored
++
++                header: PasteButton {
++                    showStorage: true
++                    storageSetUp: true
++                    onClicked: {
++                        MInputMethodQuick.sendCommit(Clipboard.text)
++                        keyboard.expandedPaste = false
++                    }
++                    onActionSelected: {
++                        actionSelector(action)
++                    }
++                }
++                delegate: BackgroundItem {
++                    id: backGround
++                    onClicked: {
++                        if (showStored)
++                            MInputMethodQuick.sendCommit(model.text)
++                    }
++                    width: storedText.width + Theme.paddingMedium
++                    height: parent.height
++
++                    Text {
++                        id: storedText
++                        anchors.centerIn: parent
++                        color: backGround.down ? Theme.highlightColor : Theme.primaryColor
++                        font { pixelSize: Theme.fontSizeSmall; family: Theme.fontFamily }
++                        text: model.text
++                    }
++                }
++            }
++
+             HorizontalPredictionListView {
+                 id: horizontalList
+ 
+                 handler: pasteHandler
+                 model: suggestionModel
+                 canRemove: !!MInputMethodQuick.extensions.autoFillCanRemove
++                visible: !showStored
++                patchSetUp: true
++                onActionActivated: {
++                    actionSelector(action)
++                }
++
+                 Connections {
+                     target: suggestionModel
+                     onStringsChanged: horizontalList.showRemoveButton = false
+@@ -44,12 +88,56 @@
+ 
+     verticalItem: Component {
+         Item {
++            SilicaListView {
++                anchors.fill: parent
++                model: storedStrings
++                orientation: ListView.Vertical
++                spacing: Theme.paddingMedium
++                visible: showStored
++
++                header: PasteButtonVertical {
++                    showStorage: true
++                    storageSetUp: true
++                    height: geometry.keyHeightLandscape
++                    width: parent.width
++                    onClicked: {
++                        MInputMethodQuick.sendCommit(Clipboard.text)
++                        keyboard.expandedPaste = false
++                    }
++                    onActionSelected: {
++                        actionSelector(action)
++                    }
++                }
++                delegate: BackgroundItem {
++                    id: backGround
++                    onClicked: {
++                        if (showStored)
++                            MInputMethodQuick.sendCommit(model.text)
++                    }
++                    width: parent.width
++                    height: storedText.height
++
++                    Text {
++                        id: storedText
++                        anchors.centerIn: parent
++                        color: backGround.down ? Theme.highlightColor : Theme.primaryColor
++                        font { pixelSize: Theme.fontSizeSmall; family: Theme.fontFamily }
++                        text: model.text
++                    }
++                }
++            }
++
+             VerticalPredictionListView {
+                 id: verticalList
+ 
+                 handler: pasteHandler
+                 model: suggestionModel
+                 canRemove: !!MInputMethodQuick.extensions.autoFillCanRemove
++                visible: !showStored
++                onActionActivated: {
++                    actionSelector(action)
++                }
++
+                 Connections {
+                     target: suggestionModel
+                     onStringsChanged: verticalList.showRemoveButton = false
+@@ -72,5 +160,81 @@
+         keyboard.expandedPaste = false
+         suggestionModel.keyClick()
+         return false
+-    }
++    }
++
++    onActiveChanged: {
++        readStoredStrings()
++        if (useStringStorage.value === 0)
++            showStored = false
++        else
++            showStored = true
++    }
++
++    property bool showStored: true
++
++    ConfigurationValue {
++        id: stringStorage
++        key: "/apps/patchmanager/paste-stored-strings/strings"
++        defaultValue: []
++    }
++
++    ConfigurationValue {
++        id: useStringStorage
++        key: "/apps/patchmanager/paste-stored-strings/enabled"
++        defaultValue: -1 // 0 - false, 1 - true
++    }
++
++    function actionSelector(act) {
++        if (act === "store")
++            saveClipboard()
++        else if (act === "strings")
++            showStored = true
++        else if (act === "clear")
++            Clipboard.text = ""
++        else if (act === "suggestions")
++            showStored = false
++        return
++    }
++
++    function saveClipboard() {
++        var list = []
++        if (Clipboard.hasText) {
++            list = stringStorage.value
++            list.unshift(Clipboard.text)
++            stringStorage.value = list
++            stringStorage.sync()
++            storedStrings.add(Clipboard.text, 0)
++        }
++        return
++    }
++
++    function readStoredStrings() {
++        var i = 0;
++        storedStrings.clear();
++        if (stringStorage.value.length > 0) {
++            while (i < stringStorage.value.length) {
++                storedStrings.add(stringStorage.value[i]);
++                i++;
++            }
++        } else {
++            storedStrings.add("-");
++        }
++
++        return;
++    }
++
++    ListModel {
++        id: storedStrings
++        ListElement {
++            text: "eka"
++        }
++        // { "text": "string" }
++        function add(str, i) {
++            if (i === undefined || i >= storedStrings.count || i < 0) {
++                append({"text": str })
++            } else {
++                insert(i, {"text": str })
++            }
++        }
++    }
+ }
+--- /usr/share/maliit/plugins/com/jolla/Xt9InputHandler.qml
++++ /usr/share/maliit/plugins/com/jolla/Xt9InputHandler.qml
+@@ -3,7 +3,8 @@
+ import com.jolla.xt9 1.0
+ import Sailfish.Silica 1.0
+ import com.jolla.keyboard 1.0
+-import Sailfish.Silica.private 1.0 as SilicaPrivate
++import Sailfish.Silica.private 1.0 as SilicaPrivate
++import Nemo.Configuration 1.0 // patch paste-stored-strings
+ 
+ InputHandler {
+     id: xt9Handler
+@@ -82,13 +83,55 @@
+ 
+     topItem: Component {
+         TopItem {
++            SilicaListView {
++                anchors.fill: parent
++                model: storedStrings
++                orientation: ListView.Horizontal
++                spacing: Theme.paddingMedium
++                visible: showStored
++
++                header: PasteButton {
++                    showStorage: true
++                    storageSetUp: true
++                    onClicked: {
++                        MInputMethodQuick.sendCommit(Clipboard.text)
++                        keyboard.expandedPaste = false
++                    }
++                    onActionSelected: {
++                        actionSelector(action)
++                    }
++                }
++                delegate: BackgroundItem {
++                    id: backGround
++                    onClicked: {
++                        if (showStored)
++                            MInputMethodQuick.sendCommit(model.text)
++                    }
++                    width: storedText.width + Theme.paddingMedium
++                    height: parent.height
++
++                    Text {
++                        id: storedText
++                        anchors.centerIn: parent
++                        color: backGround.down ? Theme.highlightColor : Theme.primaryColor
++                        font { pixelSize: Theme.fontSizeSmall; family: Theme.fontFamily }
++                        text: model.text
++                    }
++                }
++            }
++
+             HorizontalPredictionListView {
+                 id: predictionList
+ 
+                 handler: xt9Handler
+                 model: xt9Handler.showApplicationSuggestions ? suggestionModel: thread.engine
+                 canRemove: xt9Handler.showApplicationSuggestions
+-                        && !!MInputMethodQuick.extensions.autoFillCanRemove
++                        && !!MInputMethodQuick.extensions.autoFillCanRemove
++                visible: !showStored
++                patchSetUp: true
++                onActionActivated: {
++                    actionSelector(action)
++                }
+ 
+                 Connections {
+                     target: thread.engine
+@@ -117,13 +160,56 @@
+ 
+             property int inactivePadding: Theme.paddingMedium
+ 
++            SilicaListView {
++                anchors.fill: parent
++                model: storedStrings
++                orientation: ListView.Vertical
++                spacing: Theme.paddingMedium
++                visible: showStored
++
++                header: PasteButtonVertical {
++                    showStorage: true
++                    storageSetUp: true
++                    height: geometry.keyHeightLandscape
++                    width: parent.width
++                    onClicked: {
++                        MInputMethodQuick.sendCommit(Clipboard.text)
++                        keyboard.expandedPaste = false
++                    }
++                    onActionSelected: {
++                        actionSelector(action)
++                    }
++                }
++                delegate: BackgroundItem {
++                    id: backGround
++                    onClicked: {
++                        if (showStored)
++                            MInputMethodQuick.sendCommit(model.text)
++                    }
++                    width: parent.width
++                    height: storedText.height
++
++                    Text {
++                        id: storedText
++                        anchors.centerIn: parent
++                        color: backGround.down ? Theme.highlightColor : Theme.primaryColor
++                        font { pixelSize: Theme.fontSizeSmall; family: Theme.fontFamily }
++                        text: model.text
++                    }
++                }
++            }
++
+             VerticalPredictionListView {
+                 id: verticalList
+ 
+                 handler: xt9Handler
+                 model: xt9Handler.showApplicationSuggestions ? suggestionModel: thread.engine
+                 canRemove: xt9Handler.showApplicationSuggestions
+-                        && !!MInputMethodQuick.extensions.autoFillCanRemove
++                        && !!MInputMethodQuick.extensions.autoFillCanRemove
++                visible: !showStored
++                onActionActivated: {
++                    actionSelector(action)
++                }
+ 
+                 Connections {
+                     target: thread.engine
+@@ -162,7 +248,13 @@
+             commit(preedit)
+         }
+ 
+-        updateButtons()
++        updateButtons()
++
++        readStoredStrings()
++        if (useStringStorage.value === 0)
++            showStored = false
++        else
++            showStored = true
+     }
+ 
+     SilicaPrivate.StringListModel {
+@@ -375,5 +467,73 @@
+     function commit(text) {
+         MInputMethodQuick.sendCommit(text)
+         preedit = ""
+-    }
++    }
++
++    property bool showStored: true
++
++    ConfigurationValue {
++        id: stringStorage
++        key: "/apps/patchmanager/paste-stored-strings/strings"
++        defaultValue: []
++    }
++
++    ConfigurationValue {
++        id: useStringStorage
++        key: "/apps/patchmanager/paste-stored-strings/enabled"
++        defaultValue: -1 // 0 - false, 1 - true
++    }
++
++    function actionSelector(act) {
++        if (act === "store")
++            saveClipboard()
++        else if (act === "strings")
++            showStored = true
++        else if (act === "clear")
++            Clipboard.text = ""
++        else if (act === "suggestions")
++            showStored = false
++        return
++    }
++
++    function saveClipboard() {
++        var list = []
++        if (Clipboard.hasText) {
++            list = stringStorage.value
++            list.unshift(Clipboard.text)
++            stringStorage.value = list
++            stringStorage.sync()
++            storedStrings.add(Clipboard.text, 0)
++        }
++        return
++    }
++
++    function readStoredStrings() {
++        var i = 0;
++        storedStrings.clear();
++        if (stringStorage.value.length > 0) {
++            while (i < stringStorage.value.length) {
++                storedStrings.add(stringStorage.value[i]);
++                i++;
++            }
++        } else {
++            storedStrings.add("-");
++        }
++
++        return;
++    }
++
++    ListModel {
++        id: storedStrings
++        ListElement {
++            text: "eka"
++        }
++        // { "text": "string" }
++        function add(str, i) {
++            if (i === undefined || i >= storedStrings.count || i < 0) {
++                append({"text": str })
++            } else {
++                insert(i, {"text": str })
++            }
++        }
++    }
+ }
